@@ -1,0 +1,181 @@
+'CR1000
+'Created by Short Cut (4.0)
+' 
+'Customer :     University of Aarhus
+'Order :        CCSL018275
+'Campbell Scientific Ltd
+'Amended by :   Nigel Wills
+'Date :         23/05/2018
+'
+' ***** WARNING : NOTE FOLLOWING COMMENTS BEFORE USING THIS PROGRAM ******
+'
+'Add SDM-SIO1A : This uses C1, C2, C3
+'Had to move SDI-12 sensor T&RH to C5
+'Had to move CS106 control to C4 
+'Had to move GPS to Com4 : C7/C8
+'
+'No details of settings for the RS485 connection have been supplied. Using defaults : SDM address 0 = 32 comport
+'RS485, Half Duplex, 4800 baud, 8 data bits, no parity, 1 stop bit 
+'
+'*************************************************************************
+
+'Declare Variables and Units
+Dim NMEASent(2) As String * 90
+Public BattV
+Public PTemp_C
+Public TRHData(2)
+Public BP_mbar
+Public GPSData(15)
+Dim Deif_NMEA(3) As String * 70       'Input string from Leif - make Public for debugging
+Dim DeifStr(6) As String * 30         'Each Leif String split into sub strings - make Public for debugging
+Dim Counter1                          'Counter for reading Deif strings - make Public for debugging
+Dim NBytesRet                         'Number of bytes counter - make Public for debugging
+Public Deif_XDR As String * 70        'XDR Transducer Measurement Response - not required to be recorded
+Public Deif_TXT As String * 70        'TXT Text Transmission Response - not required to be recorded
+Public Deif_WD                        'Deif Wind Direction
+Public Deif_WS                        'Deif Wind Speed
+
+Alias TRHData(1)=AirTC
+Alias TRHData(2)=RH
+Alias GPSData(1)=Latitude_A
+Alias GPSData(2)=Latitude_B
+Alias GPSData(3)=Longitude_A
+Alias GPSData(4)=Longitude_B
+Alias GPSData(5)=Speed
+Alias GPSData(6)=Course
+Alias GPSData(7)=MagVar
+Alias GPSData(8)=FixQual
+Alias GPSData(9)=NumSats
+Alias GPSData(10)=Altitude
+Alias GPSData(11)=PPS
+Alias GPSData(12)=SecSinceGPRMC
+Alias GPSData(13)=GPSReady
+Alias GPSData(14)=MaxClockChange
+Alias GPSData(15)=NumClockChange
+
+Units BattV=Volts
+Units PTemp_C=Deg C
+Units BP_mbar=mbar
+Units AirTC=Deg C
+Units RH=%
+Units Latitude_A=degrees
+Units Latitude_B=minutes
+Units Longitude_A=degrees
+Units Longitude_B=minutes
+Units Speed=knots
+Units Course=degrees
+Units MagVar=degrees
+Units FixQual=code
+Units NumSats=count
+Units Altitude=meters
+Units PPS=microseconds
+Units SecSinceGPRMC=seconds
+Units GPSReady=count
+Units MaxClockChange=milliseconds
+Units NumClockChange=count
+Units Deif_WS = m/s
+Units Deif_WD = degrees
+
+'Constants
+Const ComPort = 32
+
+'Define Data Tables
+DataTable(OneSec,True,-1)
+	DataInterval(0,1,Sec,10)
+	'The following TableFile instruction causes new data to be copied to an optional SC115 Flash
+	'Memory Drive the moment it is plugged into the CS I/O port of the datalogger.
+	'This mode of operation is referred to as Data Collection Mode (see the SC115 manual).
+	'This TableFile instruction has no effect if an SC115 is never plugged into the datalogger.
+	TableFile("USB:"+Status.SerialNumber+"OneSec",8,-1,0,0,Hr,0,0)
+	Sample(1,NMEASent(1),String)
+	Sample(1,NMEASent(2),String)
+EndTable
+
+DataTable(TenSec,True,-1)
+	DataInterval(0,10,Sec,10)
+  WindVector (1,Deif_WS,Deif_WD,FP2,False,0,0,1)
+  FieldNames ("Deif_WS_S_WVT,Deif_WD_D1_WVT")
+EndTable
+
+DataTable(OneMin,True,-1)
+	DataInterval(0,1,Min,10)
+  WindVector (1,Deif_WS,Deif_WD,FP2,False,0,0,0)
+  FieldNames ("Deif_WS_S_WVT,Deif_WD_D1_WVT,Deif_WD_SD1_WVT")
+  Maximum (1,Deif_WS,FP2,False,False)
+  Minimum (1,Deif_WS,FP2,False,False)
+  StdDev (1,Deif_WS,FP2,False)
+EndTable
+
+DataTable(FiveMin,True,-1)
+	DataInterval(0,5,Min,10)
+	'The following TableFile instruction causes new data to be copied to an optional SC115 Flash
+	'Memory Drive the moment it is plugged into the CS I/O port of the datalogger.
+	'This mode of operation is referred to as Data Collection Mode (see the SC115 manual).
+	'This TableFile instruction has no effect if an SC115 is never plugged into the datalogger.
+	TableFile("USB:"+Status.SerialNumber+"FiveMin",8,-1,0,0,Hr,0,0)
+	Minimum(1,BattV,FP2,False,False)
+	Average(1,AirTC,FP2,False)
+	Average(1,BP_mbar,IEEE4,False)
+	Average(1,PTemp_C,FP2,False)
+	Average(1,BattV,FP2,False)
+	StdDev(1,AirTC,FP2,False)
+	StdDev(1,BP_mbar,IEEE4,False)
+	Sample(1,RH,FP2)
+EndTable
+
+'Main Program
+BeginProg
+  'Open serial port for the SDM-SIO1A / Deif
+  SerialOpen (ComPort,4800,48,0,300)
+  'Flush the input buffer
+  SerialFlush (ComPort)
+  
+	'Main Scan
+	Scan(1,Sec,5,0)
+		'Default CR1000 Datalogger Battery Voltage measurement 'BattV'
+		Battery(BattV)
+		'Default CR1000 Datalogger Wiring Panel Temperature measurement 'PTemp_C'
+		PanelTemp(PTemp_C,_50Hz)
+		'CS215 Temperature & Relative Humidity Sensor measurements 'AirTC' and 'RH'
+		SDI12Recorder(TRHData(),5,"0","M!",1,0,-1)
+		'CS106 Barometric Pressure Sensor measurement 'BP_mbar'
+		PortSet(4,1)
+		VoltSE(BP_mbar,1,mV2500,1,1,0,_50Hz,0.240,500)
+		GPS(GPSData(),Com4,0*3600,100,NMEASent())
+		
+    'Deif Wind Sensor NMEA 0813 strings
+    'Reset counter and end values to defaults
+    Counter1 = 1
+    Deif_XDR = ""
+    Deif_TXT = ""
+    Deif_WD = NaN
+    Deif_WS = NaN
+    'Loop round 3 times to get all 3 possible strings in RS232 buffer if present
+    Do While Counter1 < 4
+      ' Start String $ Hex : 36 = $
+      ' End string <CR> Hex : 13 = <CR>; 10 = <LF>
+      SerialInRecord (ComPort,Deif_NMEA(Counter1),36,0,&H13,NBytesRet,11)
+      ' Check some data returned from buffer
+      If (NBytesRet >0) Then
+        ' Split string into consituents
+        SplitStr (DeifStr(),Deif_NMEA(Counter1),",",6,5)
+        ' Check DeifStr(1) to see which string it is
+        If DeifStr(1) = "WIXDR" Then
+          Deif_XDR = Deif_NMEA(Counter1)
+        ElseIf DeifStr(1) = "WITXT" Then
+          Deif_TXT = Deif_NMEA(Counter1)
+        ElseIf DeifStr(1) = "WIMWV" Then
+          Deif_WD = DeifStr(2) 'Stores Wind Direction in float format
+          Deif_WS = DeifStr(4) 'Stores Wind Speed in float format
+        EndIf
+      EndIf
+      Counter1 = Counter1 + 1
+    Loop
+
+'Call Data Tables and Store Data
+		CallTable OneSec
+		CallTable TenSec
+		CallTable OneMin
+		CallTable FiveMin
+	NextScan
+EndProg
